@@ -1,0 +1,9 @@
+scapy
+dnslib
+pandas
+numpy
+scikit-learn
+joblib
+matplotlib
+streamlit
+plotly

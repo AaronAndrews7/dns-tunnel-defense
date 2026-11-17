@@ -1,0 +1,120 @@
+# Lab network: victim (172.28.0.10) -> resolver (172.28.0.2)
+# web_normal (172.28.0.21) hosts 5 normal websites, web_hacked (172.28.0.22) hosts 5 hacked ones.
+# The detector shares the resolver's network, so it sees all DNS packets
+# and can firewall (iptables) a host.
+services:
+  resolver:
+    build: .
+    image: dns-lab
+    container_name: dns_resolver
+    command: python src/resolver.py
+    environment:
+      - DATA_DIR=/data
+    volumes:
+      - ./src:/app/src
+      - ./data:/data
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.2
+
+  detector:
+    image: dns-lab
+    container_name: dns_detector
+    command: python -u src/detector.py
+    network_mode: "service:resolver"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - DATA_DIR=/data
+      - MODEL_PATH=/app/models/rf_model.joblib
+    volumes:
+      - ./src:/app/src
+      - ./data:/data
+      - ./models:/app/models
+    depends_on:
+      - resolver
+
+  victim:
+    image: dns-lab
+    container_name: victim
+    command: python -u src/victim_normal.py
+    environment:
+      - RESOLVER_IP=172.28.0.2
+      - DATA_DIR=/data
+    volumes:
+      - ./src:/app/src
+      - ./data:/data
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.10
+    depends_on:
+      - resolver
+
+  # ---- the 10 lab websites ----
+  web_normal:
+    image: dns-lab
+    container_name: web_normal
+    command: python -u src/site_server.py normal
+    environment:
+      - RESOLVER_IP=172.28.0.2
+      - DATA_DIR=/data
+    ports:
+      - "8091:80"
+    volumes:
+      - ./src:/app/src
+      - ./data:/data
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.21
+    depends_on:
+      - resolver
+
+  web_hacked:
+    image: dns-lab
+    container_name: web_hacked
+    command: python -u src/site_server.py hacked
+    environment:
+      - RESOLVER_IP=172.28.0.2
+      - DATA_DIR=/data
+    ports:
+      - "8092:80"
+    volumes:
+      - ./src:/app/src
+      - ./data:/data
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.22
+    depends_on:
+      - resolver
+
+  dashboard:
+    image: dns-lab
+    container_name: dashboard
+    command: streamlit run src/dashboard.py --server.port 8501 --server.address 0.0.0.0 --browser.gatherUsageStats false
+    environment:
+      - DATA_DIR=/data
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src:/app/src
+      - ./data:/data
+
+  # Run on demand:  docker compose run --rm trainer
+  trainer:
+    image: dns-lab
+    container_name: trainer
+    profiles: ["train"]
+    command: sh -c "python src/make_dataset.py && python src/train_model.py"
+    volumes:
+      - ./src:/app/src
+      - ./data:/data
+      - ./models:/app/models
+      - ./reports:/app/reports
+
+networks:
+  labnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
